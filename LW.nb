@@ -1,0 +1,420 @@
+(*         Mathematica 8.0          *)
+
+mod1[x_] := x - Round[x]
+
+LW[x_] := Abs[mod1[x]]
+LWNorm[x_] := Abs[mod1[x]]
+
+(*   find LW product to precision prec   *)
+LWProd[n_, \[Alpha]_, \[Beta]_, prec_] := 
+ Abs[N[n mod1[n \[Alpha]] mod1[n \[Beta]], prec]]
+
+(*   (n^(1/2)<na>,n^(1/2)<nb>)   *)
+SqrtMod1Pt[n_, list_, prec_] := N[Sqrt[n] mod1[n list], prec]
+
+(*   setting up the ring Q[T] ~ Q[\[Theta]] (T an appropriate matrix)
+represent elements of Q[\[Theta]] by matrices in Q[T], 
+right-multiplication in Q[\[Theta]] is done by right-multiplication \
+in Q[T]
+*)
+
+(*     build companion matrix T for the polynomial 
+x^d = c_(d-1) * x^(d-1) + ... + c_ 1 * x + c_ 0
+given by coeff vector {c_ 0,c_ 1,...,c_(n-1)};
+    *)
+
+CompMat[coeffs_] := Module[{d, i, j, mat},
+  d = Length[coeffs];
+  Transpose[
+   Append[
+    Table[Boole[i + 1 == j], {i, 1, d - 1}, {j, 1, d}],
+    coeffs
+    ]
+   ]
+  ]
+
+(*     build matrix corresponding to \[Zeta] = a_ 0 + a_ 1*\[Theta] + \
+... + a_(d-1)*\[Theta]^(d-1)    *)
+
+L[coeffs_, poly_] := Module[{i, M, T, L, d},
+   d = Length[poly];
+   T = CompMat[poly];
+   M = IdentityMatrix[d];
+   L = M coeffs[[1]];
+   For[i = 2, i <= d, i++,
+    M = M.T;
+    L += M coeffs[[i]];
+    ];
+   L
+   ];
+
+(*     Norm of \[Lambda] = a_ 0 + a_ 1*\[Theta] + ... + a_(d-1)*\
+\[Theta]^(d-1)     *)
+
+Nm[coeffs_, poly_] := Det[L[coeffs, poly]]
+
+(*     given \[Lambda]1 as coeff list and monic poly as coeff list \
+(w/o highest-deg),
+		produce first num terms of seq \[Lambda]1^n
+*)
+
+\[Lambda]nSeq[\[Lambda]1_, poly_, num_] := 
+ Module[{\[Lambda]n, \[Lambda]mat, i, seq},
+  \[Lambda]n = \[Lambda]1;
+  \[Lambda]mat = L[\[Lambda]1, poly];
+  seq = {\[Lambda]1};
+  For[i = 2, i <= num, i++,
+   (*Print[\[Lambda]n];*)
+   \[Lambda]n = \[Lambda]mat.\[Lambda]n;
+   seq = Append[seq, \[Lambda]n];
+   ];
+  seq
+  ]
+
+(*   get pair of lists: real roots and complex roots   *)
+
+\[Theta]List[poly_] := 
+  Module[{x, f, d, tmp, precision, \[Epsilon], i, r, Nr},
+   precision = 10;
+   \[Epsilon] = 10^(-precision);     (* 
+   to decide if root is real or complex *)
+   d = Length[poly];
+   
+   f = (x^Range[0, d - 1]).poly; (* 
+   create monic polynomial from coeffs *)
+   tmp = x /. Solve[f == x^d, x]; (* find its roots *)
+    
+   (* clean up the list *)
+   For[i = 1, i <= Length[tmp], i++,
+    r = tmp[[i]];
+    Nr = N[r, 2*precision];
+    
+    If[Abs[Im[Nr]] < \[Epsilon],    (* if Im[r] is small, 
+     replace r with Re[r]  *)
+     tmp[[i]] = Re[r]
+     ];
+    If[Abs[Re[Nr]] < \[Epsilon],   (* if Re[r] is small, 
+     replace r with Im[r] *)
+     tmp[[i]] = I Im[r]
+     ];
+    ];
+   
+   tmp = Sort[tmp, Im[N[#1]]^2 < Im[N[#2]]^2 &] ; (* 
+   rearrange to list real roots first *)
+   tmp
+   ];
+
+(*  get real root \[Theta] s.t. \[Theta]^deg == c_ 0 + c_ 1*\[Theta] \
++ ... + c_(deg-1)*\[Theta]^(deg-1) *)
+
+(*  uses Solve  *)
+Theta[coeffs_] := Module[{x, poly},
+  poly = (x^Range[0, Length[coeffs] - 1]).coeffs;
+  x /. Solve[poly == x^Length[coeffs], x, Reals]
+  ]
+
+(*  uses NSolve  *) 
+NTheta[coeffs_] := Module[{x, poly},
+  poly = (x^Range[0, Length[coeffs] - 1]).coeffs;
+  x /. NSolve[poly == x^Length[coeffs], x, Reals]
+  ]
+
+(*   get list of (mat^0,mat^1,...,mat^{m-1}   *)
+
+MatrixPowersList[mat_, m_] :=
+ Module[{i, tmp, list, n},
+  n = Length[mat];
+  tmp = IdentityMatrix[n];
+  list = {tmp};
+  For[i = 1, i < m, i++,
+   tmp = tmp.mat;
+   list = Append[list, tmp];
+   ];
+  list
+  ]
+  
+
+(*    produce matrix V such that 
+V.(\[Theta]^(d-1),...,\[Theta],1) is eig.val. for all M_\[Lambda]
+*)
+
+EVMat[poly_] := Module[{i, mat, row, len},
+  len = Length[poly];
+  row = -Reverse[poly];
+  mat = {};
+  
+  For[i = 1, i <= len, i++,
+   row = Delete[row, -1];
+   row = Prepend[row, 0];
+   mat = Append[mat, row];
+   ];
+  
+  mat + IdentityMatrix[len]
+  
+  ]
+
+
+(*   produce vector {t^(len-1),dots,t,1}
+   (for when I need to deal with these eigenvectors)
+*)
+
+Vt[t_, len_] := t^Range[len - 1, 0, -1]
+
+(*   find integer point close to kth multiple of an eigenvalue;
+		input root t of poly and k
+   *)
+
+EVMultApprox[t_, k_] := Module[{tmp, Th},
+  tmp = EVMat[poly];
+  Th = Vt[t, Length[poly]];
+  tmp.Round[k Th]
+  ]
+
+(*   produce sequence of EVMultApprox;
+	input root t and length
+   *)
+
+EVMultApproxSeq[t_, len_] := Module[{k, Th, V, tmp},
+  tmp = EVMat[poly];
+  V = {};
+  Th = Vt[t, Length[poly]];
+  For[k = 1, k <= len, k++,
+   V = Append[V, tmp.Round[k Th]];
+   ];
+  V
+  ]
+
+(*   try to find a unit by looking at integer multiples of \
+eigenvector   *)
+
+FindUnit[t_, UB_] :=
+ Module[{k, Th, \[Mu], evtrans, norm},
+  evtrans = EVMat[poly];
+  Th = Vt[t, Length[poly]];
+  
+  k = 0;
+  norm = 0;
+  While[Abs[norm] != 1 && k <= UB,
+   k++;
+   \[Mu] = evtrans.Round[k Th];
+   norm = Nm[\[Mu], poly];
+   ];
+  If[norm != 1,
+   Table[0, {i, 1, Length[poly]}],
+   \[Mu]
+   ]
+  ]
+
+(*   find a unit near each real eigenvector   *)
+
+FindUnits[poly_, UB_] :=
+ Module[{roots, r, evtransmat, i, k, th, Th, \[Mu], norm, \[Mu]vec},
+  roots = Theta[poly];
+  r = Length[roots];
+  evtransmat = EVMat[poly];
+  \[Mu]vec = {};
+  
+  For[i = 1, i <= r, i++,
+   th = roots[[i]];
+   Th = Vt[th, Length[poly]];
+   
+   k = 0;
+   norm = 0;
+   While[Abs[norm] != 1 && k <= UB,
+    k++;
+    \[Mu] = evtransmat.Round[k Th];
+    norm = Nm[\[Mu], poly];
+    ];
+   If[norm != 1,
+    \[Mu] = Table[0, {i, 1, Length[poly]}]
+    ];
+   \[Mu]vec = Append[\[Mu]vec, \[Mu]];
+   ];
+  \[Mu]vec
+  ]
+
+
+(*   rational approx to (\[Theta]^(d-1),...,\[Theta],1) using cf for \
+each power
+*)
+
+ThetaPowersApprox[\[Theta]_, veclen_, cflen_] :=
+ Module[{i, approx},
+  approx = {1};
+  For[i = 1, i <= veclen - 1, i++,
+   approx = Prepend[approx, Conv[\[Theta]^i, cflen]]
+   ];
+  approx
+  ]
+  
+
+  
+(* initialize a number field K=Q[x]/(poly)
+by defining some constants;
+we'll treat it as a subring of Q^{d x d}
+*)
+
+NFInit[poly_] := Module[{p},
+  p = poly[[2]];
+  
+  Clear[x];
+  deg = Length[poly]; (* degree of the extension *)
+  Kpoly = x^deg - poly.x^Range[0, deg - 1];
+  roots = \[Theta]List[poly]; (* create vector of roots, 
+  starting with real roots *)
+  realroots = Cases[roots, _?(Im[N[#]]^2 < 10^-10 &)];
+  complexroots = Cases[roots, _?(Head[N[#]] == Complex &)];
+  signature = {Length[realroots], Length[complexroots]/2};
+  
+  T = CompMat[poly];                                            (* 
+  T acts like \[Theta] *)
+  TPowers = MatrixPowersList[T, deg];     (* 
+  use this to build elements of K *)
+  \[Theta]powers = 
+   Table[roots[[i]]^j, {i, 1, deg}, {j, deg - 1, 0, -1}];
+  P = EVMat[poly];                                      (* 
+  the Toeplitz matrix *)
+  PInv = Inverse[P];                                
+  Eigvecs = P.# & /@ \[Theta]powers;                (* 
+  eigenvalues of each M_\zeta *)
+  
+  
+  Print["degree = ", deg];
+  Print["defining poly :  ", Kpoly];
+  Print["roots : ", N[roots]];
+  Print["signature : ", signature];
+  (*Print["C0 = ",C0,"  C1 = ",C1,"  C2 = ",C2];*)
+  Print["EVMat  P = ", MatrixForm[P]];
+  
+  Print["Functions :
+    KM[a] (matrix for a)
+    K\[Sigma][a] (vector of \[Sigma]_i(a))
+    KN[a] (norm of a)
+    KTr[a] (trace of a)
+    KMul[a,b], KDiv[a,b], KExp[a,n]
+    KExpSeq[a,n]
+    \[Theta]PowersApprox[i,n] (get nth convergents of {\[Theta]_i^j} \
+for j=0,..,deg-1)
+    EigVecApprox[i,n]  (get approx of ith real eigvec)
+   "]
+  ]
+
+(* functions for K *)
+
+(*KM[a_]:=a.TPowers;  (* build matrix M_\zeta *)*)
+KMat[a_] := a.TPowers;  (* build matrix M_\zeta *)
+K\[Sigma][a_] := 
+ Map[#.Reverse[a] &, N[\[Theta]powers]] (* vec of \[Sigma]_i (a)'s *)
+
+
+K\[Sigma]Exact[a_] := 
+ Map[#.Reverse[a] &, \[Theta]powers] (* exact values *)
+KN[a_] := Det[KMat[a]];  (* Norm of \[Lambda] *)
+KTr[a_] := Tr[KMat[a]];  (* Trace of \[Lambda] *)
+(*KMul[a_,b_]:=(KM[a].KM[b]).UnitVector[deg,1];  (* multiply a and b \
+in K *)*)
+KMul[a_, b_] := KMat[a].b   (* multiply a and b in K *)
+KInv[a_] := Inverse[KMat[a]].UnitVector[deg, 1];   (* get a^{-1} *)
+(*KDiv[a_,b_]:=(KM[a].Inverse[KM[b]]).UnitVector[deg,1]; (* a/b in K *)*)
+
+
+KDiv[a_, b_] := Inverse[KMat[b]].a (* a/b in K *)
+
+(*  calculate a^n (n>0) in K by repeated squaring  *)
+KExpPos[a_, n_] := Module[{digits, A, b, i},
+  digits = IntegerDigits[n, 2];   (* get bits of n, 
+  highest to lowest *)
+  A = KMat[a];              (* matrix for a *)
+  
+  (*  repeated squaring step  *)
+  b = a;   (* first bit is 1 *)
+  For[i = 2, i <= Length[digits], i++,
+   b = KMat[b].b;                          (* squaring *)
+   If[digits[[i]] == 1,      (* if ith bit is 1, multiply by a *)
+    b = A.b;
+    ];
+   ];
+  b
+  ]
+
+
+(*  calculate a^n for any int n   *)
+KExp[a_, n_Integer] :=
+ If[n > 0, KExpPos[a, n],
+  If[n == 0, IdentityMatrix[deg][[1]],
+   KExpPos[KInv[a], -n]
+   ]
+  ]
+
+(*    get a1^x*a2^y   *)
+KFac[a1_, a2_, x_, y_] := Module[{b1, b2},
+  b1 = KExp[a1, x];
+  b2 = KExp[a2, y];
+  KMul[b1, b2]
+  ]
+
+(*  get seq of a^i from m to n *)
+KExpSeq[a_, m_, n_] := Module[{A, ai, i, seq},
+  A = KMat[a];
+  ai = KExp[a, m];
+  seq = {ai};
+  
+  For[i = m, i < n, i++,
+   ai = A.ai;
+   seq = Append[seq, ai];
+   ];
+  seq
+  ]
+
+(*  get vector of approx's to \[Sigma]_i(\[Theta]^j) for \
+j=1,..,(deg-1)  *)
+
+\[Theta]PowersApprox[i_, n_] := Module[{\[Theta]j, convs, j},
+  convs = {1};  (* \[Theta]_ 0=1 *)
+  
+  For[j = 2, j <= deg, j++,
+   (* append conv[(\[Theta]_i)^j,n] to convs *)
+   convs = 
+    Prepend[convs, Convergents[\[Theta]powers[[i]][[-j]], n][[-1]]]
+   ];
+  convs
+  ]
+
+(*  get rational approx's to eigenvalues, using conv's of \[Theta]^j  \
+*)
+EigVecApprox[i_, n_] := P.\[Theta]PowersApprox[i, n];
+
+(*  boolean vector; True if # is real  *)
+
+K\[Sigma]RealQ[a_] := Module[{precision, exactvalues},
+  precision = 10; (* decide that # is real if Im[#]^2<10^-precision *)
+
+  
+  exactvalues = K\[Sigma]Exact[a];
+  Map[N[Im[#]^2, 2*precision] < 10^-precision &, exactvalues] 
+  ]
+
+
+(* find rational approximations of real eigvals using nth conv's of \
+cf's *)
+
+K\[Sigma]Approx[a_, n_] := 
+ Module[{precision, isreal, exactvalues, convs, i},
+  (* decide that # is real if Im[#]^2<10^-precision *)
+  precision = 10; (*  precision = 10 seems safe   *)
+  exactvalues = K\[Sigma]Exact[a];  (* 
+  get exact vals of \[Sigma]_i(a) *)
+  isreal = 
+   Map[N[Im[#]^2, 2*precision] < 10^-precision &, exactvalues] ;(* 
+  True if # is real *)
+  
+  convs = {};
+  For[i = 1, i <= deg, i++,
+   If[isreal[[i]],
+     convs = Append[convs, Convergents[exactvalues[[i]], n][[-1]]],
+     convs = Append[convs, 0]
+     ];
+   ];
+  convs
+  ]
+
