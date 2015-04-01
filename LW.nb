@@ -2,7 +2,6 @@
 
 mod1[x_] := x - Round[x]
 
-LW[x_] := Abs[mod1[x]]
 LWNorm[x_] := Abs[mod1[x]]
 
 (*   find LW product to precision prec   *)
